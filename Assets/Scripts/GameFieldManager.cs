@@ -8,7 +8,7 @@ public class GameFieldManager : NetworkBehaviour
     
     public GameObject nodePrefab;
     public int gridSize = 3;
-    public float spacing = 3f;
+    public float spacing = 2.5f;
     
     private List<NodeLogic> allNodes = new List<NodeLogic>();
     
@@ -23,14 +23,11 @@ public class GameFieldManager : NetworkBehaviour
     public override void OnStartServer()
     {
         base.OnStartServer();
-        Debug.Log("✅ GameFieldManager: Сервер стартовал");
         CreateGrid();
     }
     
     void CreateGrid()
     {
-        Debug.Log($"🔧 Создаю сетку {gridSize}x{gridSize}");
-        
         for (int x = 0; x < gridSize; x++)
         {
             for (int y = 0; y < gridSize; y++)
@@ -52,13 +49,10 @@ public class GameFieldManager : NetworkBehaviour
         }
         
         SetUpConnections();
-        Debug.Log($"✅ Создано {allNodes.Count} узлов");
     }
     
     void SetUpConnections()
     {
-        Debug.Log("🔗 Устанавливаю связи...");
-        
         for (int i = 0; i < allNodes.Count; i++)
         {
             int x = i % gridSize;
@@ -66,50 +60,75 @@ public class GameFieldManager : NetworkBehaviour
             
             allNodes[i].ConnectedNodes.Clear();
             
-            // Лево
             if (x > 0) allNodes[i].ConnectedNodes.Add(allNodes[i - 1]);
-            // Право
             if (x < gridSize - 1) allNodes[i].ConnectedNodes.Add(allNodes[i + 1]);
-            // Низ
             if (y > 0) allNodes[i].ConnectedNodes.Add(allNodes[i - gridSize]);
-            // Верх
             if (y < gridSize - 1) allNodes[i].ConnectedNodes.Add(allNodes[i + gridSize]);
-            
-            Debug.Log($"Узел {allNodes[i].name} имеет {allNodes[i].ConnectedNodes.Count} соседей");
         }
     }
     
     [Server]
     public void GiveNodeToPlayer(int playerId)
     {
-        Debug.Log($"🎮 Выдаю узел игроку {playerId}");
-        
         foreach (NodeLogic node in allNodes)
         {
             if (node.OwnerId == -1)
             {
                 node.CaptureNode(playerId);
-                Debug.Log($"✅ Узел {node.name} выдан игроку {playerId}");
                 return;
             }
         }
     }
-    
-    // МЕТОД ДЛЯ ПРОВЕРКИ СВЯЗЕЙ
-    public void DebugLogConnections()
+
+    [Server]
+    public void GiveInitialNodesToPlayer(int playerId, int nodeCount = 3)
     {
-        Debug.Log("=== ПРОВЕРКА СВЯЗЕЙ МЕЖДУ УЗЛАМИ ===");
+        List<NodeLogic> freeNodes = new List<NodeLogic>();
+        foreach (NodeLogic node in allNodes)
+        {
+            if (node.OwnerId == -1)
+                freeNodes.Add(node);
+        }
+        
+        ShuffleList(freeNodes);
+        
+        int nodesGiven = 0;
+        for (int i = 0; i < Mathf.Min(nodeCount, freeNodes.Count); i++)
+        {
+            freeNodes[i].CaptureNode(playerId);
+            nodesGiven++;
+        }
+    }
+
+    private void ShuffleList<T>(List<T> list)
+    {
+        for (int i = 0; i < list.Count; i++)
+        {
+            T temp = list[i];
+            int randomIndex = Random.Range(i, list.Count);
+            list[i] = list[randomIndex];
+            list[randomIndex] = temp;
+        }
+    }
+     
+    [Server]
+    public void ForceUpdateConnections()
+    {
+        SetUpConnections();
         
         foreach (NodeLogic node in allNodes)
         {
-            string neighborNames = "";
-            foreach (NodeLogic neighbor in node.ConnectedNodes)
+            if (node != null)
             {
-                neighborNames += neighbor.name + " ";
+                node.DrawConnections();
             }
-            
-            Debug.Log($"Узел {node.name} (Владелец: {node.OwnerId}, Значение: {node.Value})");
-            Debug.Log($"  Соседи: {neighborNames}");
+        }
+    }
+    void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.F7) && isServer)
+        {
+            ForceUpdateConnections();
         }
     }
 }

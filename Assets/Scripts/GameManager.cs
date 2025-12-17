@@ -12,11 +12,16 @@ public class GameManager : NetworkBehaviour
     public GameObject gameOverPanel;
     public TMP_Text winnerText;
     public TMP_Text playerStatusText;
+    public TMP_Text turnInfoText;
     
     [SyncVar] public bool gameOver = false;
     [SyncVar] public int winnerId = -1;
+    [SyncVar] public int currentPlayerId = -1;
+    [SyncVar] public float turnTimeRemaining = 30f;
     
     private HashSet<int> activePlayers = new HashSet<int>();
+    private List<int> playerTurnOrder = new List<int>();
+    private int currentPlayerIndex = 0;
     
     void Awake()
     {
@@ -28,33 +33,35 @@ public class GameManager : NetworkBehaviour
     
     void Start()
     {
-        Debug.Log("GameManager Start");
-        
         if (gameOverPanel != null)
         {
             gameOverPanel.SetActive(false);
         }
         
-        // Запускаем игру через 3 секунды после старта
         if (isServer)
         {
             Invoke(nameof(StartGame), 3f);
+        }
+        if (turnInfoText != null)
+        {
+            turnInfoText.text = "Ожидание игроков...";
         }
     }
     
     [Server]
     void StartGame()
     {
-        Debug.Log("🎮 Игра начинается!");
-        
+        if (playerTurnOrder.Count > 0)
+        {
+            currentPlayerId = playerTurnOrder[0];
+            turnTimeRemaining = 30f;
+        }
         RpcGameStarted();
     }
     
     [ClientRpc]
     void RpcGameStarted()
     {
-        Debug.Log("🎮 Игра началась!");
-        
         if (playerStatusText != null)
         {
             playerStatusText.text = "Игра началась!";
@@ -68,7 +75,12 @@ public class GameManager : NetworkBehaviour
             return;
         
         activePlayers.Add(playerId);
-        Debug.Log($"🎮 Игрок {playerId} зарегистрирован. Активных: {activePlayers.Count}");
+        playerTurnOrder.Add(playerId);
+
+        if (activePlayers.Count == 1)
+        {
+            Invoke(nameof(StartGame), 3f);
+        }
         UpdatePlayerStatus();
     }
     
@@ -79,7 +91,18 @@ public class GameManager : NetworkBehaviour
             return;
         
         activePlayers.Remove(playerId);
-        Debug.Log($"Игрок {playerId} проиграл. Осталось: {activePlayers.Count}");
+        playerTurnOrder.Remove(playerId);
+
+        if (currentPlayerId == playerId)
+        {
+            NextTurn();
+        }
+
+        if (playerTurnOrder.Count > 0)
+        {
+            currentPlayerIndex = playerTurnOrder.IndexOf(currentPlayerId);
+            if (currentPlayerIndex == -1) currentPlayerIndex = 0;
+        }
         
         UpdatePlayerStatus();
         RpcPlayerLost(playerId);
@@ -91,15 +114,12 @@ public class GameManager : NetworkBehaviour
     {
         if (gameOver) return;
         
-        Debug.Log($"Проверка победителя. Активных игроков: {activePlayers.Count}");
-        
         if (activePlayers.Count == 1)
         {
             foreach (int playerId in activePlayers)
             {
                 winnerId = playerId;
                 gameOver = true;
-                Debug.Log($"🏆 Игрок {playerId} победил!");
                 RpcGameOver(winnerId);
                 break;
             }
@@ -108,7 +128,6 @@ public class GameManager : NetworkBehaviour
         {
             winnerId = -1;
             gameOver = true;
-            Debug.Log("Ничья!");
             RpcGameOver(winnerId);
         }
     }
@@ -116,11 +135,8 @@ public class GameManager : NetworkBehaviour
     [ClientRpc]
     void RpcPlayerLost(int playerId)
     {
-        Debug.Log($"Игрок {playerId} проиграл");
-        
         if (PlayerClicker.localPlayerId == playerId)
         {
-            Debug.Log("Вы проиграли!");
             if (playerStatusText != null)
                 playerStatusText.text = "Вы проиграли!";
         }
@@ -129,8 +145,6 @@ public class GameManager : NetworkBehaviour
     [ClientRpc]
     void RpcGameOver(int winnerId)
     {
-        Debug.Log($"Игра окончена! Победитель: {(winnerId == -1 ? "Ничья" : $"Игрок {winnerId}")}");
-        
         StartCoroutine(ShowGameOverDelayed(winnerId));
     }
     
@@ -141,20 +155,18 @@ public class GameManager : NetworkBehaviour
         if (gameOverPanel != null)
         {
             gameOverPanel.SetActive(true);
-            Debug.Log("GameOverPanel активирован");
             
             if (winnerText != null)
             {
                 if (winnerId == -1)
                     winnerText.text = "НИЧЬЯ!\nВсе игроки проиграли";
                 else if (PlayerClicker.localPlayerId == winnerId)
-                    winnerText.text = "ПОБЕДА!\n🏆 Вы победили! 🏆";
+                    winnerText.text = "ПОБЕДА!";
                 else
                     winnerText.text = $"ИГРА ОКОНЧЕНА\nПобедил Игрок {winnerId}";
             }
         }
         
-        // Отключаем управление у всех игроков
         PlayerClicker[] players = FindObjectsOfType<PlayerClicker>();
         foreach (PlayerClicker player in players)
         {
@@ -171,10 +183,67 @@ public class GameManager : NetworkBehaviour
         RpcUpdatePlayerStatus(activePlayers.Count);
     }
     
+    void Update()
+    {
+        if (isServer && !gameOver && currentPlayerId != -1)
+        {
+            turnTimeRemaining -= Time.deltaTime;
+            
+            if (turnTimeRemaining <= 0f)
+            {
+                NextTurn();
+            }
+        }
+        
+        if (turnInfoText != null && currentPlayerId != -1)
+        {
+            int localPlayerId = PlayerClicker.localPlayerId;
+            string turnText = "";
+            
+            if (localPlayerId == currentPlayerId)
+            {
+                turnText = $"ВАШ ХОД!\nВремени осталось: {Mathf.CeilToInt(turnTimeRemaining)}с";
+                turnInfoText.color = Color.green;
+            }
+            else
+            {
+                turnText = $"Ход игрока {currentPlayerId}\nВремени осталось: {Mathf.CeilToInt(turnTimeRemaining)}с";
+                turnInfoText.color = Color.yellow;
+            }
+            
+            turnInfoText.text = turnText;
+        }
+    }
+    
     [ClientRpc]
     void RpcUpdatePlayerStatus(int activeCount)
     {
         if (playerStatusText != null)
             playerStatusText.text = $"Активных игроков: {activeCount}";
+    }
+    
+    [Server]
+    public void NextTurn()
+    {
+        if (gameOver || playerTurnOrder.Count == 0) 
+        {
+            return;
+        }
+        
+        currentPlayerIndex = playerTurnOrder.IndexOf(currentPlayerId);
+        if (currentPlayerIndex == -1)
+        {
+            currentPlayerIndex = 0;
+        }
+        
+        currentPlayerIndex = (currentPlayerIndex + 1) % playerTurnOrder.Count;
+        currentPlayerId = playerTurnOrder[currentPlayerIndex];
+        turnTimeRemaining = 30f;
+    }
+
+    [Server]
+    public bool CanPlayerAct(int playerId)
+    {
+        return !gameOver && currentPlayerId == playerId;
     }
 }
