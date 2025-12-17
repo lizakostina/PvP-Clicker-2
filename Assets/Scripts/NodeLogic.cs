@@ -15,15 +15,16 @@ public class NodeLogic : NetworkBehaviour
     
     private SpriteRenderer spriteRenderer;
     private TextMesh textMesh;
+    private LineRenderer lineRenderer;
     
     void Start()
     {
         spriteRenderer = GetComponent<SpriteRenderer>();
         CreateTextMesh();
+        InitializeLineRenderer(); 
         
         if (isServer)
         {
-            // Убедимся, что значения разные для отладки
             Value = Random.Range(15, 25);
             OwnerId = -1;
             UpdateVisual();
@@ -32,8 +33,6 @@ public class NodeLogic : NetworkBehaviour
         {
             UpdateVisual();
         }
-        
-        Debug.Log($"Узел {name} создан. Server: {isServer}, Client: {isClient}");
     }
     
     void CreateTextMesh()
@@ -58,13 +57,11 @@ public class NodeLogic : NetworkBehaviour
     
     void OnValueChanged(int oldValue, int newValue)
     {
-        Debug.Log($"Узел {name}: Значение изменилось {oldValue} -> {newValue}");
         UpdateVisual();
     }
     
     void OnOwnerChanged(int oldOwner, int newOwner)
     {
-        Debug.Log($"Узел {name}: Владелец изменился {oldOwner} -> {newOwner}");
         UpdateVisual();
     }
     
@@ -103,11 +100,8 @@ public class NodeLogic : NetworkBehaviour
         if (Value <= 0)
         {
             Value = 0;
-            OwnerId = -1; // Сначала делаем нейтральным
-            Debug.Log($"Узел {name}: Стал нейтральным (достиг 0)");
+            OwnerId = -1;
             
-            // НЕ захватываем сразу! Ждем отдельного клика
-            // Проверяем, не потерял ли старый владелец все узлы
             if (oldOwner != -1)
             {
                 StartCoroutine(CheckPlayerNodesAfterDelay(oldOwner));
@@ -119,7 +113,6 @@ public class NodeLogic : NetworkBehaviour
     public void IncreaseValue(int amount)
     {
         Value += amount;
-        Debug.Log($"Узел {name}: Значение увеличено на {amount} до {Value}");
     }
     
     [Server]
@@ -127,10 +120,8 @@ public class NodeLogic : NetworkBehaviour
     {
         int oldOwner = OwnerId;
         OwnerId = newOwnerId;
-        Value = 1; // При захвате ставим минимальное значение
-        Debug.Log($"Узел {name}: Захвачен игроком {newOwnerId}");
+        if (Value <= 0) Value = 1;
         
-        // Проверяем, не потерял ли старый владелец все узлы
         if (oldOwner != -1 && oldOwner != newOwnerId)
         {
             StartCoroutine(CheckPlayerNodesAfterDelay(oldOwner));
@@ -156,8 +147,43 @@ public class NodeLogic : NetworkBehaviour
         
         if (!hasNodes && GameManager.Instance != null)
         {
-            Debug.Log($"💀 Игрок {playerId} потерял все узлы!");
             GameManager.Instance.PlayerDefeated(playerId);
         }
+    }
+    void InitializeLineRenderer()
+    {
+        lineRenderer = gameObject.AddComponent<LineRenderer>();
+        lineRenderer.startWidth = 0.1f;
+        lineRenderer.endWidth = 0.1f;
+        lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+        lineRenderer.startColor = Color.gray;
+        lineRenderer.endColor = Color.gray;
+        lineRenderer.sortingOrder = -1;
+        lineRenderer.positionCount = 0;
+    }
+    public void DrawConnections()
+    {
+        if (lineRenderer == null || ConnectedNodes == null || ConnectedNodes.Count == 0)
+        {
+            if (lineRenderer != null) lineRenderer.positionCount = 0;
+            return;
+        }
+        
+        lineRenderer.positionCount = ConnectedNodes.Count * 2;
+        int positionIndex = 0;
+        
+        foreach (NodeLogic neighbor in ConnectedNodes)
+        {
+            if (neighbor == null) continue;
+            
+            lineRenderer.SetPosition(positionIndex, transform.position);
+            lineRenderer.SetPosition(positionIndex + 1, neighbor.transform.position);
+            positionIndex += 2;
+        }
+    }
+
+    void Update()
+    {
+        DrawConnections();
     }
 }
